@@ -1,0 +1,431 @@
+---
+title: "FSRM588 Group1 Proposal2"
+author: "Kehan Li, Lyujiangnan Ye, Zhe Ren"
+date: "4/11/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+library("DataExplorer")
+library("GGally")
+library(gtable)
+library(grid)
+library(gridExtra)
+library(ggplot2)
+library(ISLR)
+library(ROSE)
+library(expss)
+library("gbm")
+library(rpart)
+library(rpart.plot)
+```
+*Import Data and Pre-examination*
+```{r}
+telco = read.csv("/Users/RZhe/Documents/data mining/Project/WA_Fn-UseC_-Telco-Customer-Churn.csv")
+str(telco)
+glimpse(telco)
+summary(telco) 
+## there are 11 NA in totalCharges, account for 0.16% of total observations, we can remove them, or fill them w/ median or mean  
+## telco = telco[complete.cases(telco),]
+telco <- telco %>% 
+  mutate(TotalCharges = if_else(is.na(TotalCharges) == TRUE, median(TotalCharges,na.rm = TRUE),TotalCharges)) %>%   
+  mutate(SeniorCitizen = fctr(SeniorCitizen)) %>%
+  select(-customerID) 
+plot_missing(telco) 
+## in Data Explorer library
+head(telco)
+```
+*Resampling data*
+```{r}
+## split dataset into test and train dataset
+smp_siz = floor(0.75*nrow(telco))
+set.seed(123)
+train.index = sample(seq_len(nrow(telco)),size = smp_siz)
+## creates the training dataset with row numbers stored in train.index
+telco.train = telco[train.index,] 
+## creates the test dataset excluding the row numbers mentioned in train.index
+telco.test = telco[-train.index,]
+head(telco.train)
+head(telco.test)
+```
+```{r}
+## check imbalanced classification and classes distribution
+table(telco.train$Churn)
+prop.table(table(telco.train$Churn)) 
+```
+```{r}
+library(rpart)
+treeimb <- rpart(Churn ~ ., data = telco.train)
+pred.treeimb <- predict(treeimb, newdata = telco.test)
+accuracy.meas(telco.test$Churn, pred.treeimb[,2])
+```
+Recall = 0.377 is very much low and indicates that we have higher number of false negatives. F = 0.243 is also low and suggests weak accuracy of this model. 
+
+```{r}
+## recheck the accuracy
+roc.curve(telco.test$Churn, pred.treeimb[,2], plotit = F)
+```
+The value suggests that the model is biased towards the majority class and failed to map the minority class. 
+
+Then, the next step is to deal with imbalanced classification problem. To solve this problem, we would like to synthesize data using exsiting data, using package ROSE. 
+```{r}
+## synthesizing data
+telco.rose <- ROSE(Churn ~ ., data = telco, seed = 1)$data
+head(telco.rose)
+table(telco.rose$Churn)
+prop.table(table(telco.rose$Churn)) 
+```
+*Data Modification*
+```{r }
+## check the distribution of three continuous variables 
+## install.packages("gtable")
+grid.arrange(
+  ggplot(telco, aes(x = MonthlyCharges, color = Churn)) + 
+    geom_freqpoly(size = 2) +
+    theme_minimal(),
+  ggplot(telco, aes(x = TotalCharges, color = Churn)) + 
+    geom_freqpoly(size = 2) +
+    theme_minimal(),
+  ggplot(telco, aes(x = tenure, color = Churn)) + 
+    geom_freqpoly(size = 2) +
+    theme_minimal()
+)
+## MonthlyCharges - higher churn when charge is higher 
+## TotalCharges - churn rate is higher when the total charge is small - the customers who spend huge are less likely to churn
+## tenure - young customers are more likely to churn, while there are many long-term loyal customers - highly correlated with TotalCharges
+```
+
+Then check that of discrete variables
+
+```{r}
+grid.arrange(
+    
+    ggplot(telco, aes(x=gender,fill=Churn))+ 
+    geom_bar(position = "fill", show.legend = FALSE) + 
+    scale_fill_ordinal() + 
+    theme_minimal(),
+    
+    ggplot(telco, aes(x=SeniorCitizen,fill=Churn))+ 
+    geom_bar(position = 'fill')+
+    labs(y = NULL) + 
+    scale_fill_ordinal() +
+    theme_minimal(),
+    
+    ggplot(telco, aes(x=Partner,fill=Churn))+ 
+    geom_bar(position = 'fill', show.legend = FALSE) +
+    scale_fill_ordinal() + 
+    theme_minimal(),
+    
+    ggplot(telco, aes(x=Dependents,fill=Churn))+ 
+    geom_bar(position = 'fill')+
+    labs(y = NULL) + 
+    scale_fill_ordinal() + 
+    theme_minimal(),
+    
+    ggplot(telco, aes(x=PhoneService,fill=Churn))+
+    geom_bar(position = 'fill', show.legend = FALSE) +
+    scale_fill_ordinal() +
+    theme_minimal(),
+
+    ggplot(telco, aes(x=MultipleLines,fill=Churn))+
+    geom_bar(position = 'fill')+
+    labs(y = NULL) + scale_fill_ordinal() +
+    theme_minimal(),
+    
+    nrow = 3)
+
+## Senior person, no parter, no dependents, are more likely to churn
+## Feature Engineering: Partner + Dependents together = family size 
+```
+
+
+```{r}
+grid.arrange(
+    ggplot(telco, aes(x=InternetService,fill=Churn))+ 
+    geom_bar(position = 'fill', show.legend = FALSE) + 
+    scale_fill_ordinal() + 
+    theme_minimal(),
+    
+    ggplot(telco, aes(x=OnlineSecurity,fill=Churn))+ 
+    geom_bar(position = 'fill')+labs(y = NULL) + 
+    scale_fill_ordinal() + 
+    theme_minimal(),
+    
+    ggplot(telco, aes(x=OnlineBackup,fill=Churn))+ 
+    geom_bar(position = 'fill', show.legend = FALSE) + 
+    scale_fill_ordinal() + 
+    theme_minimal(),
+    
+    ggplot(telco, aes(x=DeviceProtection,fill=Churn))+ 
+    geom_bar(position = 'fill')+
+    labs(y = NULL) + 
+    scale_fill_ordinal() + 
+    theme_minimal(),
+    
+    ggplot(telco, aes(x=TechSupport,fill=Churn))+ 
+    geom_bar(position = 'fill', show.legend = FALSE) + 
+    scale_fill_ordinal() + 
+    theme_minimal(),
+   
+    ggplot(telco, aes(x=StreamingTV,fill=Churn))+ geom_bar(position = 'fill')+
+    labs(y = NULL) + 
+    scale_fill_ordinal() + 
+    theme_minimal(),
+    nrow = 3 
+  
+)
+
+## Using Fiber optic service, not registered for online security, online backup, device protection(both Y&N), techsupport, are likely to churn.
+## DeviceProtection, StreamingTV do not seem to make a difference. 
+## FeatureEngineering: Sum(ServiceRegistered), or make it binary
+```
+
+
+
+```{r }
+library("stringr")
+
+grid.arrange(
+    ggplot(telco, aes(x=StreamingMovies,fill=Churn))+ 
+    geom_bar(position = 'fill', show.legend = FALSE) + 
+    scale_fill_ordinal() + 
+    theme_minimal(),
+    
+    ggplot(telco, aes(x=Contract,fill=Churn))+  
+    geom_bar(position = 'fill')+labs(y = NULL) + 
+    scale_fill_ordinal() + 
+    theme_minimal(),
+    
+    ggplot(telco, aes(x=PaperlessBilling,fill=Churn))+ 
+    geom_bar(position = 'fill', show.legend = FALSE) + 
+    scale_fill_ordinal() + 
+    theme_minimal(),
+    
+    ggplot(telco, aes(x=PaymentMethod,fill=Churn))+
+    geom_bar(position = 'fill')+
+    labs(y = NULL) + 
+    scale_fill_ordinal() + theme_minimal()+
+    scale_x_discrete(labels = function(x) str_wrap(x, width = 10)), 
+                     
+    nrow=3)
+
+## Month-to-month contract, use paperlessBilling, and Electronic check easier to churn 
+
+```
+
+
+```{r}
+library(dplyr)
+## Breakdown tenure
+telco <- telco  %>% mutate(tenureCat = fctr(if_else(tenure <= 12, "0-1 Year",
+                                        if_else(tenure <= 24, "1-2 Year",
+                                               if_else(tenure <= 36, "2-3 Year",
+                                                      if_else(tenure <= 48, "3-4 Year",
+                                                             if_else(tenure <= 60, "4-5 Year", "5-6 Year"))))))) 
+telco.rose <- telco.rose  %>% mutate(tenureCat = fctr(if_else(tenure <= 12, "0-1 Year",
+                                        if_else(tenure <= 24, "1-2 Year",
+                                               if_else(tenure <= 36, "2-3 Year",
+                                                      if_else(tenure <= 48, "3-4 Year",
+                                                             if_else(tenure <= 60, "4-5 Year", "5-6 Year"))))))) 
+# ggplot(telco.rose, aes(tenureCat, fill = Churn))+
+#     geom_bar()+
+#     coord_flip()+
+#     labs(y = "Frequecny", x = "Tenure Category")+
+#     scale_fill_ordinal()+
+#     theme_minimal()
+
+ggplot(telco, aes(tenureCat, fill = Churn))+
+    geom_bar()+
+    coord_flip()+
+    labs(y = "Frequecny", x = "Tenure Category")+
+    scale_fill_ordinal()+
+    theme_minimal()
+## it happens most frequently in tenure 0-1 year, take a closer look
+ggplot(telco, aes(y= tenure, fill = Churn)) + 
+    geom_boxplot()+ 
+    theme_bw()
+#the median is around 10 months
+ggplot(telco, aes(y= MonthlyCharges, fill = Churn)) + 
+    geom_boxplot()+ 
+    theme_bw()
+## People with higher monthly charges are more likely to churn, median around 75
+```
+
+
+##Data Preparation
+1. Standardize continuous variables
+2. Create dummy variables for categorical variables
+```{r}
+## standardizing continuous features
+con_var = c("tenure","MonthlyCharges","TotalCharges") 
+## put all three continuous variables together
+telco.rose[con_var] = sapply(telco.rose[con_var], as.numeric)
+
+telco_std = telco.rose[,c("tenure","MonthlyCharges","TotalCharges")]
+telco_std = data.frame(scale(telco_std))
+summary(telco_std)
+```
+
+
+```{r}
+#Create dummy variables
+#get row id of cateogrical variables
+which(colnames(telco)=="Churn")
+which(colnames(telco)=="tenure")
+which(colnames(telco)=="MonthlyCharges")
+which(colnames(telco)=="TotalCharges")
+
+
+#create categorical variable dataset, also get rid of customerID
+telco_cat = telco.rose[,-c(20,5,18,19)]
+head(telco_cat)
+
+dummy_cat = data.frame(sapply(telco_cat, function(x) data.frame(model.matrix(~x-1,data = telco_cat))[,-1]))
+head(dummy_cat)
+
+#create the final dataset by combining both transformed categorical and continuous data frames 
+Churn <- telco.rose$Churn
+telco_final = cbind(Churn, telco_std, dummy_cat)
+head(telco_final)
+#which(colnames(telco_final)=="Churn")
+```
+
+
+*Fitting Classification Tree*
+```{r}
+library(tree)
+# tree.telco <- tree(Churn ~., telco_final)
+# summary(tree.telco)
+```
+
+```{r}
+## split dataset into test and train dataset
+smp_siz = floor(0.5*nrow(telco))
+set.seed(123)
+train.index = sample(seq_len(nrow(telco_final)),size = smp_siz)
+## creates the training dataset with row numbers stored in train.index
+telco.train = telco_final[train.index,] 
+## creates the test dataset excluding the row numbers mentioned in train.index
+telco.test = telco_final[-train.index,]
+tree.telco <- tree(Churn ~., telco.train)
+tree.prediction <- predict(tree.telco, telco.test, type = "class")
+table(tree.prediction, telco.test$Churn)
+plot(tree.telco)
+text(tree.telco, pretty =0)
+```
+```{r}
+(1201+1493)/(1201+518+310+1493)
+
+```
+About 72.8% chances we make true prediction.
+
+*Cross-Validation on Desicion Tree*
+```{r}
+set.seed(123)
+cv.telco <- cv.tree(tree.telco, FUN=prune.misclass)
+names(cv.telco)
+```
+
+```{r}
+cv.telco$size
+cv.telco$dev
+cv.telco$k
+cv.telco$method
+```
+
+```{r}
+plot(cv.telco$size, cv.telco$dev, type="b")
+plot(cv.telco$k, cv.telco$dev, type="b")
+```
+
+```{r}
+prune.telco <- prune.misclass(tree.telco, best=3)
+plot(prune.telco)
+text(prune.telco, pretty=0)
+```
+
+```{r}
+tree.pred <- predict(prune.telco, telco.test, type = "class")
+table(tree.pred, telco.test$Churn)
+```
+```{r}
+(1013+1599)/(1013+1599+204+706)
+
+```
+
+From the result above, we can tell that cross validation did not improve the aaccuracy of the decision. This may suggest that single tree is not sufficient enough. In next step, we would try other methods, including boosting, bagging, and random forest. 
+
+*Boosting*
+```{r}
+set.seed(123)
+## To use boosting, we must have response in between {0, 1}. 
+# telco.train.boost <- telco.train %>%
+#   mutate(Churn = ifelse(Churn == "Yes", 1, 0))
+# telco.test.boost <- telco.test %>% 
+#   mutate(Churn = ifelse(Churn == "Yes", 1, 0))
+boost.telco <- gbm(Churn ~., data = telco.train, distribution = "multinomial", n.trees = 5000, interaction.depth=6)
+## Summary suggests the importance of each varaible. 
+summary(boost.telco)
+```
+
+```{r}
+boost.pred <- predict(boost.telco, newdata = telco.test, n.trees = 5000, type = "response")
+## labels the prediction with factor with highest probability
+labels <- colnames(boost.pred)[apply(boost.pred, 1, which.max)]
+table(labels, telco.test$Churn)
+```
+
+```{r}
+(1288+1317)/(1288+1317+486+431)
+```
+The result suggested that boost did help improving the prediction accuracy. 
+
+*Random Forest* 
+```{r}
+library("randomForest")
+set.seed(123)
+
+model.rf = randomForest(Churn ~ ., data=telco.train, proximity = FALSE, importance = FALSE, ntree = 500, mtry = 4, do.trace = FALSE )
+model.rf
+```
+
+```{r}
+(1412+1362)/(1412+1362+405+342)
+```
+
+```{r}
+#Predicting on test set 
+testPred = predict(model.rf, newdata=telco.test)
+table(testPred,telco.test$Churn)
+```
+
+```{r}
+(1358+1437)/(1358+1437+361+366)
+```
+
+```{r}
+#Check for variable importance plot
+library(caret)
+varImpPlot(model.rf)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
